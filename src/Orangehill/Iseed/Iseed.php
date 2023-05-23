@@ -2,6 +2,7 @@
 
 namespace Orangehill\Iseed;
 
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Composer;
 use Illuminate\Support\Facades\Config;
@@ -61,7 +62,7 @@ class Iseed
      * @return bool
      * @throws Orangehill\Iseed\TableNotFoundException
      */
-    public function generateSeed($table, $prefix=null, $suffix=null, $database = null, $max = 0, $chunkSize = 0, $exclude = null, $prerunEvent = null, $postrunEvent = null, $dumpAuto = true, $indexed = true, $orderBy = null, $direction = 'ASC')
+    public function generateSeed($table, $prefix=null, $suffix=null, $database = null, $max = 0, $chunkSize = 0, $exclude = null, $prerunEvent = null, $postrunEvent = null, $dumpAuto = true, $indexed = true, $orderBy = null, $direction = 'ASC', bool $alphaColumnOrder = false)
     {
         if (!$database) {
             $database = config('database.default');
@@ -75,7 +76,7 @@ class Iseed
         }
 
         // Get the data
-        $data = $this->getData($table, $max, $exclude, $orderBy, $direction);
+        $data = $this->getData($table, $max, $exclude, $orderBy, $direction, $alphaColumnOrder);
 
         // Repack the data
         $dataArray = $this->repackSeedData($data);
@@ -130,12 +131,12 @@ class Iseed
      * @param  string $table
      * @return Array
      */
-    public function getData($table, $max, $exclude = null, $orderBy = null, $direction = 'ASC')
+    public function getData($table, $max, $exclude = null, $orderBy = null, $direction = 'ASC', bool $alphaColumnOrder = false)
     {
         $result = \DB::connection($this->databaseName)->table($table);
 
         if (!empty($exclude)) {
-            $allColumns = \DB::connection($this->databaseName)->getSchemaBuilder()->getColumnListing($table);
+            $allColumns = $this->getColumnListing(\DB::connection($this->databaseName), $table, $alphaColumnOrder);
             $result = $result->select(array_diff($allColumns, $exclude));
         }
 
@@ -413,5 +414,24 @@ class Iseed
         }
 
         return $this->files->put($databaseSeederPath, $content) !== false;
+    }
+
+    private function getColumnListing(ConnectionInterface $connection, string $table, bool $alphaColumnOrder): array
+    {
+        $table = $connection->getTablePrefix() . $table;
+        $orderColumn = $alphaColumnOrder ? 'column_name' : 'ORDINAL_POSITION';
+        $compileColumnListing = '
+            select column_name as `column_name`
+            from information_schema.columns
+            where table_schema = ?
+                and table_name = ?
+            order by ' . $orderColumn . '  asc;
+        ';
+
+        $results = $connection->select(
+            $compileColumnListing, [$connection->getDatabaseName(), $table]
+        );
+
+        return $connection->getPostProcessor()->processColumnListing($results);
     }
 }
